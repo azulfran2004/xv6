@@ -8,6 +8,8 @@
 #include "traps.h"
 #include "spinlock.h"
 
+extern int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
@@ -47,6 +49,28 @@ trap(struct trapframe *tf)
   }
 
   switch(tf->trapno){
+  case T_PGFLT:
+    uint va = rcr2();	//Obtenemos la dir.virtual que falló
+    struct proc *curproc = myproc();
+    //Comprobamos si la dirección es válida en el tamaño prometido
+    if(curproc && va<curproc->sz){
+	//Reservamos una pág.fisica nueva
+	char *mem = kalloc();
+	if(mem==0) curproc->killed = 1;	//Sin memoria
+	else{
+		memset(mem,0,PGSIZE);	//Limpiamos la pág. a 0
+		//Mapeamos la pág física en la dir.virtual redondeada
+		uint va_redondeada = PGROUNDDOWN(va);
+		if(mappages(curproc->pgdir,(char*)va_redondeada, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+			//Fallo en el mapeo
+			kfree(mem);
+		}
+		//Si todo va bien, no hacemos nada. Ya que cuando
+		//salga del trap, se volverá a ejercutar la instrucc.
+		//y ahora encontrará memoria.
+		break;
+	}
+    }
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
       acquire(&tickslock);
