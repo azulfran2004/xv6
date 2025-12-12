@@ -9,6 +9,7 @@
 #include "spinlock.h"
 
 extern int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+extern pde_t* walkpgdir(pde_t *pgdir, const void *va, int alloc);
 
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
@@ -52,25 +53,37 @@ trap(struct trapframe *tf)
   case T_PGFLT:
     uint va = rcr2();	//Obtenemos la dir.virtual que falló
     struct proc *curproc = myproc();
+    pde_t *pte;
     //Comprobamos si la dirección es válida en el tamaño prometido
-    if(curproc && va<curproc->sz){
-	//Reservamos una pág.fisica nueva
-	char *mem = kalloc();
-	if(mem==0) curproc->killed = 1;	//Sin memoria
-	else{
+    if(curproc && va < curproc->sz){
+	//Comprobamos si la pág. ya existe
+	//Si existe y está presente (PTE_P), es un fallo de protección
+	pte = walkpgdir(curproc->pgdir, (void*)va, 0);
+
+	if(pte && (*pte & PTE_P)){
+           curproc->killed = 1;	//Matar proceso por violación de acceso
+	   //break;
+        }
+        else{
+		//Si no existe, reservamos una pág.fisica nueva
+		char *mem = kalloc();
+		if(mem==0) curproc->killed = 1;	//Sin memoria
+	
 		memset(mem,0,PGSIZE);	//Limpiamos la pág. a 0
 		//Mapeamos la pág física en la dir.virtual redondeada
 		uint va_redondeada = PGROUNDDOWN(va);
 		if(mappages(curproc->pgdir,(char*)va_redondeada, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
 			//Fallo en el mapeo
 			kfree(mem);
+			curproc->killed = 1;
 		}
 		//Si todo va bien, no hacemos nada. Ya que cuando
 		//salga del trap, se volverá a ejercutar la instrucc.
 		//y ahora encontrará memoria.
 		break;
-	}
+    	}
     }
+
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
       acquire(&tickslock);
