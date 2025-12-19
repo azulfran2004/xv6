@@ -57,16 +57,14 @@ sys_sbrk(void)
 {
   int addr;
   int n;
-  struct proc *curproc = myproc();
 
-  if(argint(0, &n) < 0)
-    return -1;
+  if(argint(0, &n) < 0) return -1;
   addr = myproc()->sz;
-  if(n > 0) curproc->sz += n;	//Simplemente aumentamos el tamaño sin  llamar a growproc()
-  else if(n < 0){
-	//Si es negativo, sí debemos reducir la memoria
-	if((curproc->sz = deallocuvm(curproc->pgdir,addr,addr+n)) == 0) return -1;
+  if(n > 0){	//Aumentamos la memoria del proceso
+	if(myproc()->sz + n >= KERNBASE) return -1;	//Si la mem pedida llega hasta el kernel: Falla
+	myproc()->sz +=n;
   }
+  else if(growproc(n) < 0) return -1; //Si no es positiva, llamamos a growproc
   return addr;
 }
 
